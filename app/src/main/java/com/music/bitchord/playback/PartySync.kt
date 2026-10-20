@@ -289,6 +289,23 @@ class PartySync(
         }
     }
 
+    /** Hold an automatic advance for the party's scheduled start before any audio plays. */
+    fun onAutomaticTransition() {
+        val party = ListenTogether.state.value
+        val exo = player()
+        val song = exo?.currentMediaItem?.toSong()
+        val partyTrack = party.playback.track
+        if (!focusLost && exo != null && exo.playWhenReady && song != null && !song.isDeviceFile() &&
+            party.inParty && party.connection == ListenTogether.Connection.LIVE && party.clockSynced &&
+            !party.controlsLocked && party.playback.isPlaying && partyTrack != null &&
+            partyTrack.videoId != song.videoId
+        ) {
+            exo.pause()
+            if (!shouldDeferPlay()) exo.play()
+        }
+        onLocalIntent()
+    }
+
     /** A queue row started dragging in the UI. See [onLocalIntent]. */
     private var queueDragActive = false
 

@@ -24,12 +24,13 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      - name: Test queue replacement
+      - name: Test queues and automatic party transitions
         run: >-
           ./gradlew :app:testDevDebugUnitTest
           --tests com.music.bitchord.DetailScreenQueueTest
           --tests com.music.bitchord.QueueCoordinatorTest
           --tests com.music.bitchord.playback.BoundedQueuePlannerTest
+          --tests com.music.bitchord.playback.PartyAutomaticTransitionTest
 
       - name: Build the test APK
         run: ./gradlew :app:assembleDevDebug
