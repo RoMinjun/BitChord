@@ -13,50 +13,41 @@ class PartyPlaybackQueueTest {
         Song(id, id, "Artist", null, queueTier = tier)
 
     @Test
-    fun `selected manual and collection tracks preserve order tier and source`() {
+    fun `party selection uses only selected and following collection tracks`() {
         val source = QueueSource("Summer Mix", PlaybackSourceType.BROWSE, "playlist-1")
         val selected = song("selected")
-        val existingManual = song("manual", QueueTier.USER_QUEUE).copy(
-            playbackSource = "Shared Queue",
-            playbackSourceType = PlaybackSourceType.QUEUE,
-            playbackSourceId = "party-1",
-        )
-        val staleAutoplay = song("old-autoplay", QueueTier.AUTOPLAY)
         val following = listOf(song("same-id"), song("same-id"))
 
         val queue = QueueTimeline.buildPartyPlaybackQueue(
             tappedSong = selected,
             source = source,
-            upcomingPartySongs = listOf(existingManual, staleAutoplay),
             followingSongs = following,
         )
 
-        assertEquals(listOf("selected", "manual", "same-id", "same-id"), queue.map(Song::videoId))
+        assertEquals(listOf("selected", "same-id", "same-id"), queue.map(Song::videoId))
         assertEquals(QueueTier.CONTEXT, queue[0].queueTier)
-        assertEquals(listOf(QueueTier.USER_QUEUE, QueueTier.USER_QUEUE, QueueTier.USER_QUEUE), queue.drop(1).map(Song::queueTier))
+        assertEquals(listOf(QueueTier.USER_QUEUE, QueueTier.USER_QUEUE), queue.drop(1).map(Song::queueTier))
         assertEquals(source.title, queue[0].playbackSource)
         assertEquals(source.type, queue[0].playbackSourceType)
         assertEquals(source.id, queue[0].playbackSourceId)
-        assertEquals("Shared Queue", queue[1].playbackSource)
-        assertEquals(PlaybackSourceType.QUEUE, queue[1].playbackSourceType)
-        queue.drop(2).forEach { followingSong ->
+        queue.drop(1).forEach { followingSong ->
             assertEquals(source.title, followingSong.playbackSource)
             assertEquals(source.type, followingSong.playbackSourceType)
             assertEquals(source.id, followingSong.playbackSourceId)
         }
+        assertNotNull(queue[1].queueEntryId)
         assertNotNull(queue[2].queueEntryId)
-        assertNotNull(queue[3].queueEntryId)
-        assertNotEquals(queue[2].queueEntryId, queue[3].queueEntryId)
+        assertNotEquals(queue[1].queueEntryId, queue[2].queueEntryId)
     }
 
     @Test
-    fun `default party queue and one off queue do not add collection tracks`() {
+    fun `party one off starts fresh while normal one off preserves manual queue`() {
         val selected = song("selected")
         val existing = song("manual", QueueTier.USER_QUEUE)
         val source = QueueSource("Home", PlaybackSourceType.HOME)
 
-        val partyQueue = QueueTimeline.buildPartyPlaybackQueue(selected, source, listOf(existing))
-        assertEquals(listOf("selected", "manual"), partyQueue.map(Song::videoId))
+        val partyQueue = QueueTimeline.buildPartyPlaybackQueue(selected, source)
+        assertEquals(listOf("selected"), partyQueue.map(Song::videoId))
 
         val oneOff = QueueTimeline.buildOneOffQueue(
             currentTimeline = listOf(song("playing"), existing),
@@ -72,7 +63,6 @@ class PartyPlaybackQueueTest {
         val queue = QueueTimeline.buildPartyPlaybackQueue(
             tappedSong = song("selected"),
             source = QueueSource("Album", PlaybackSourceType.BROWSE, "album-1"),
-            upcomingPartySongs = emptyList(),
             followingSongs = listOf(
                 song("content://media/1"),
                 song("file:///music/local.mp3"),

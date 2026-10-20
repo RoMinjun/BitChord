@@ -131,7 +131,6 @@ import com.music.bitchord.data.AppUpdateChecker
 import com.music.bitchord.data.LocalMediaRepository
 import com.music.bitchord.data.listentogether.JamInviteLink
 import com.music.bitchord.data.listentogether.ListenTogether
-import com.music.bitchord.data.listentogether.partyQueueIndexOf
 import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.innertube.InnertubeParser
@@ -1348,18 +1347,9 @@ private fun BitChordApp(
 
             if (ListenTogether.state.value.inParty) {
                 val selectedSong = songs.getOrNull(index) ?: return@launch
-                val party = ListenTogether.state.value
-                val partyQueue = party.queue.items
-                val partyIndex = partyQueueIndexOf(party.queue, party.playback, party.playback.track?.videoId)
-                val upcomingPartyTracks = if (partyIndex >= 0) {
-                    partyQueue.drop(partyIndex + 1)
-                } else {
-                    emptyList()
-                }
                 val timeline = QueueCoordinator.buildPartyPlaybackQueue(
                     tappedSong = selectedSong,
                     source = source,
-                    upcomingPartyTracks = upcomingPartyTracks,
                     followingSongs = songs.drop(index + 1),
                 )
                 val initial = ListenTogether.preparePlaylist(timeline.map { it.toPartyTrack(0L) }, 0)
@@ -1476,15 +1466,20 @@ private fun BitChordApp(
         scope.launch {
             if (refusedByHost()) return@launch
             val c = controller ?: return@launch
-            val currentTimeline = player.queue.takeIf { it.size == c.mediaItemCount }
-                ?: (0 until c.mediaItemCount).map { c.getMediaItemAt(it).toSong() }
-            val currentIndex = c.currentMediaItemIndex
-            val oneOffQueue = QueueCoordinator.buildOneOffQueue(
-                currentTimeline = currentTimeline,
-                currentIndex = currentIndex,
-                tappedSong = song,
-                source = source,
-            )
+            val oneOffQueue = if (ListenTogether.state.value.inParty) {
+                val timeline = QueueCoordinator.buildPartyPlaybackQueue(song, source)
+                val initial = ListenTogether.preparePlaylist(timeline.map { it.toPartyTrack(0L) }, 0)
+                timeline.take(initial.items.size)
+            } else {
+                val currentTimeline = player.queue.takeIf { it.size == c.mediaItemCount }
+                    ?: (0 until c.mediaItemCount).map { c.getMediaItemAt(it).toSong() }
+                QueueCoordinator.buildOneOffQueue(
+                    currentTimeline = currentTimeline,
+                    currentIndex = c.currentMediaItemIndex,
+                    tappedSong = song,
+                    source = source,
+                )
+            }
             c.playSongs(oneOffQueue, 0)
             // Start radio in the mini-player; the user opens the full view by tapping it.
         }

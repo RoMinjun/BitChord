@@ -1,6 +1,5 @@
 package com.music.bitchord
 
-import com.music.bitchord.data.listentogether.PartyTrack
 import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.model.Song
@@ -146,7 +145,7 @@ class DetailScreenQueueTest {
     }
 
     @Test
-    fun `tapping song in playlist while in party keeps following tracks and upcoming manual party queue`() {
+    fun `tapping song in playlist while in party replaces old queue and keeps following tracks`() {
         val playlistSongs = List(50) { i ->
             testSong(id = "track-$i", title = "Song $i", artist = "Artist $i")
         }
@@ -155,56 +154,34 @@ class DetailScreenQueueTest {
         val selectedSong = playlistSongs[20]
         val source = QueueSource("My Playlist", PlaybackSourceType.BROWSE, "playlist-123")
 
-        // Canonical party queue has two manual items upcoming
-        val upcomingPartyTracks = listOf(
-            PartyTrack(videoId = "party-manual-1", title = "Manual 1", artist = "Artist 1", fromAutoplay = false),
-            PartyTrack(videoId = "party-manual-2", title = "Manual 2", artist = "Artist 2", fromAutoplay = false),
-        )
-
         val timeline = QueueCoordinator.buildPartyPlaybackQueue(
             tappedSong = selectedSong,
             source = source,
-            upcomingPartyTracks = upcomingPartyTracks,
             followingSongs = playlistSongs.drop(21),
         )
 
-        assertEquals(32, timeline.size)
+        assertEquals(30, timeline.size)
         assertEquals("track-20", timeline[0].videoId)
         assertEquals(QueueTier.CONTEXT, timeline[0].queueTier)
         assertEquals("My Playlist", timeline[0].playbackSource)
         assertEquals(PlaybackSourceType.BROWSE, timeline[0].playbackSourceType)
 
-        assertEquals("party-manual-1", timeline[1].videoId)
-        assertEquals(QueueTier.USER_QUEUE, timeline[1].queueTier)
-
-        assertEquals("party-manual-2", timeline[2].videoId)
-        assertEquals(QueueTier.USER_QUEUE, timeline[2].queueTier)
-        assertEquals(playlistSongs.drop(21).map { it.videoId }, timeline.drop(3).map { it.videoId })
-        assertTrue(timeline.drop(3).all { it.queueTier == QueueTier.USER_QUEUE })
+        assertEquals(playlistSongs.drop(21).map { it.videoId }, timeline.drop(1).map { it.videoId })
+        assertTrue(timeline.drop(1).all { it.queueTier == QueueTier.USER_QUEUE })
     }
 
     @Test
-    fun `tapping song in playlist while in party drops stale autoplay tracks from upcoming party tracks`() {
+    fun `tapping song in party replaces all old entries`() {
         val selectedSong = testSong(id = "new-track", title = "New Song", artist = "New Artist")
         val source = QueueSource("Album", PlaybackSourceType.BROWSE, "album-1")
-
-        // Canonical party queue had 1 manual item and 2 autoplay items from the previous track
-        val upcomingPartyTracks = listOf(
-            PartyTrack(videoId = "manual-1", title = "Manual 1", fromAutoplay = false),
-            PartyTrack(videoId = "stale-auto-1", title = "Auto 1", fromAutoplay = true),
-            PartyTrack(videoId = "stale-auto-2", title = "Auto 2", fromAutoplay = true),
-        )
 
         val timeline = QueueCoordinator.buildPartyPlaybackQueue(
             tappedSong = selectedSong,
             source = source,
-            upcomingPartyTracks = upcomingPartyTracks,
         )
 
-        // Resulting timeline must contain ONLY: [new-track] + [manual-1]. Stale autoplay items are pruned!
-        assertEquals(listOf("new-track", "manual-1"), timeline.map { it.videoId })
+        assertEquals(listOf("new-track"), timeline.map { it.videoId })
         assertEquals(QueueTier.CONTEXT, timeline[0].queueTier)
-        assertEquals(QueueTier.USER_QUEUE, timeline[1].queueTier)
     }
 
     @Test
@@ -215,7 +192,6 @@ class DetailScreenQueueTest {
         val timeline = QueueCoordinator.buildPartyPlaybackQueue(
             tappedSong = selectedSong,
             source = source,
-            upcomingPartyTracks = emptyList(), // Snapshot has not arrived yet or empty room
         )
 
         // Resulting timeline must be ONLY the tapped song

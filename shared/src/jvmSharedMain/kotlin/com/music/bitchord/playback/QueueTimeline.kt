@@ -119,20 +119,15 @@ object QueueTimeline {
     /**
      * Constructs a playback timeline for Listen Together mode:
      *
-     * The selected track comes first, then existing manual party tracks and the rest of the
-     * selected collection. Previous AutoPlay suggestions are dropped. Collection tracks become
+     * The selected track comes first, followed by the rest of the selected collection. Collection tracks become
      * manual party entries so synchronization keeps them in the shared running order.
      */
     fun buildPartyPlaybackQueue(
         tappedSong: Song,
         source: QueueSource,
-        upcomingPartySongs: List<Song>,
         followingSongs: List<Song> = emptyList(),
     ): List<Song> =
         listOf(tappedSong.from(source).asQueueEntry(QueueTier.CONTEXT)) +
-            upcomingPartySongs
-                .filterNot { it.fromAutoplay }
-                .map { it.asQueueEntry(QueueTier.USER_QUEUE) } +
             followingSongs
                 .filterNot { it.videoId.startsWith("content://") || it.videoId.startsWith("file://") }
                 .map { it.from(source).asQueueEntry(QueueTier.USER_QUEUE) }

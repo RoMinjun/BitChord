@@ -24,6 +24,13 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
+      - name: Test queue replacement
+        run: >-
+          ./gradlew :app:testDevDebugUnitTest
+          --tests com.music.bitchord.DetailScreenQueueTest
+          --tests com.music.bitchord.QueueCoordinatorTest
+          --tests com.music.bitchord.playback.BoundedQueuePlannerTest
+
       - name: Build the test APK
         run: ./gradlew :app:assembleDevDebug
 

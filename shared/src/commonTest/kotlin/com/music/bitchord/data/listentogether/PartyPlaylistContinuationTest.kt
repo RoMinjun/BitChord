@@ -8,6 +8,19 @@ class PartyPlaylistContinuationTest {
     private fun playlist(size: Int) = (0 until size).map { PartyTrack("id-${it % 3}", title = "$it") }
 
     @Test
+    fun `starting another playlist replaces the old unqueued songs`() {
+        val continuation = PartyPlaylistContinuation()
+        continuation.start(playlist(70), 0, 0)
+        val replacement = (0 until 40).map { PartyTrack("new-$it") }
+        val queue = continuation.start(replacement, 0, 10).copy(seq = 11)
+        assertEquals(listOf(replacement[26]), continuation.nextBatch(
+            queue, PartyPlayback(queueSeq = 11, queueIndex = 1)))
+
+        val single = continuation.start(listOf(PartyTrack("single")), 0, 11).copy(seq = 12)
+        assertTrue(continuation.nextBatch(single, PartyPlayback(queueSeq = 12, queueIndex = 0)).isEmpty())
+    }
+
+    @Test
     fun `reconnect retries a lost batch but acknowledges an accepted one`() {
         val all = playlist(40)
         val continuation = PartyPlaylistContinuation()

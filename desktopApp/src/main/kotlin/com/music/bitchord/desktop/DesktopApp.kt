@@ -854,16 +854,10 @@ fun BitChordDesktopApp() {
         return true
     }
 
-    /**
-     * Keep existing manual party entries ahead of the rest of the selected collection.
-     */
     fun partyPlaybackQueue(tapped: Song, followingSongs: List<Song> = emptyList()): List<Song> {
-        val party = DesktopListenTogether.state.value
-        val upcoming = partyUpcomingAfter(party.queue, party.playback, party.playback.track?.videoId)
         val songs = QueueTimeline.buildPartyPlaybackQueue(
             tapped,
             tapped.queueSource(),
-            DesktopQueue.adopt(liveQueue.upcoming, upcoming.map { it.toDesktopSong() }),
             followingSongs.filter { it.localPath == null && it.localUri == null },
         )
         val initial = DesktopListenTogether.preparePlaylist(songs.map { it.toPartyTrack(0L) }, 0)
