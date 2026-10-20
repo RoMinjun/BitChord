@@ -9,6 +9,7 @@ import com.music.bitchord.data.listentogether.PartyMembership
 import com.music.bitchord.data.listentogether.PartyPlayback
 import com.music.bitchord.data.listentogether.PartyPreview
 import com.music.bitchord.data.listentogether.PartyQueue
+import com.music.bitchord.data.listentogether.PartyPlaylistContinuation
 import com.music.bitchord.data.listentogether.PartySnapshot
 import com.music.bitchord.data.listentogether.PartyTrack
 import com.music.bitchord.data.listentogether.ServerClock
@@ -139,6 +140,8 @@ internal object DesktopListenTogether {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val clock = ServerClock()
     private val persistence by lazy { DesktopPersistence() }
+
+    private val playlistContinuation = PartyPlaylistContinuation()
 
     private val _state = MutableStateFlow(State())
     val state: StateFlow<State> = _state.asStateFlow()
@@ -328,6 +331,7 @@ internal object DesktopListenTogether {
             persistence.saveString(KEY_TOKEN, membership.token)
             persistence.saveString(KEY_ACTIVE_SERVER, activePartyServerBase.orEmpty())
             clock.reset()
+            synchronized(playlistContinuation) { playlistContinuation.clear() }
             _state.value = State(
                 code = membership.code,
                 you = membership.you,
@@ -359,6 +363,7 @@ internal object DesktopListenTogether {
         persistence.saveString(KEY_TOKEN, "")
         persistence.saveString(KEY_ACTIVE_SERVER, "")
         _activity.value = emptyList()
+        synchronized(playlistContinuation) { playlistContinuation.clear() }
         _state.value = State()
         if (code != null && held != null && server.isNotBlank()) {
             runCatching {
@@ -387,6 +392,22 @@ internal object DesktopListenTogether {
             put("isPlaying", isPlaying)
         }
 
+    /** Retains the playlist tail locally while the server holds its bounded upcoming queue. */
+    fun preparePlaylist(queue: List<PartyTrack>, index: Int): PartyQueue =
+        synchronized(playlistContinuation) {
+            playlistContinuation.start(queue, index, _state.value.queue.seq)
+        }
+
+    fun refillPlaylist(): List<PartyTrack> {
+        val state = _state.value
+        if (state.connection != Connection.LIVE || state.controlsLocked) return emptyList()
+        val batch = synchronized(playlistContinuation) {
+            playlistContinuation.nextBatch(state.queue, state.playback)
+        }
+        if (batch.isNotEmpty()) queueAdd(batch)
+        return batch
+    }
+
     fun setQueue(queue: List<PartyTrack>, index: Int) = control("setQueue") {
         put("queue", json.encodeToJsonElement(ListSerializer(PartyTrack.serializer()), queue))
         put("queueIndex", index)
@@ -399,7 +420,11 @@ internal object DesktopListenTogether {
 
     fun queueRemove(videoId: String) = control("queueRemove") { put("videoId", videoId) }
 
-    fun queueClear() = control("queueClear") {}
+    fun queueClear() {
+        if (_state.value.controlsLocked) return
+        synchronized(playlistContinuation) { playlistContinuation.clear() }
+        control("queueClear") {}
+    }
 
     fun queueMove(fromIndex: Int, toIndex: Int, videoId: String? = null) = control("queueMove") {
         put("fromIndex", fromIndex)
@@ -547,6 +572,7 @@ internal object DesktopListenTogether {
                 val you = frame["you"]?.let {
                     runCatching { json.decodeFromJsonElement(PartyMember.serializer(), it) }.getOrNull()
                 }
+                synchronized(playlistContinuation) { playlistContinuation.onReconnect(party.queue.seq) }
                 _state.update {
                     it.copy(
                         code = party.code,

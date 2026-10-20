@@ -189,6 +189,7 @@ class PartySync(
     private var driftCooldownUntilMs = 0L
 
     private var lastPartyCode: String? = null
+    private var seededPlaylist = false
 
     fun start() {
         jobs += scope.launch {
@@ -521,6 +522,13 @@ class PartySync(
         }
         loadingVideoId = null
         reconcileQueue(party, exo)
+        val playlistBatch = ListenTogether.refillPlaylist()
+        if (playlistBatch.isNotEmpty()) {
+            exo.addMediaItems(playlistBatch.map { it.toSong().toMediaItem() })
+            awaitPlaybackSeq = party.playback.seq
+            awaitQueueSeq = party.queue.seq + 1
+            reconcileQuietUntilMs = SystemClock.elapsedRealtime() + INTENT_QUIET_MS
+        }
 
         // Muted by its own listener while the party plays on. Everything above
         // this line still applies — the track the party moved to is loaded, the
@@ -756,22 +764,15 @@ class PartySync(
         // the full list is not — it parses a metadata bundle per track — and
         // this runs on every pause and every seek, on a queue that can be
         // hundreds long.
-        val rawLocalItems = (0 until exo.mediaItemCount)
+        val localItems = (0 until exo.mediaItemCount)
             .map { exo.getMediaItemAt(it) }
             .filterNot { it.mediaId.startsWith("content://") || it.mediaId.startsWith("file://") }
 
-        val rawTrackIndex = rawLocalItems.indexOfFirst { it.mediaId == track.videoId }
-        val localItems = if (rawTrackIndex >= 0) {
-            val pastAndCurrent = rawLocalItems.subList(0, rawTrackIndex + 1)
-            val upcoming = rawLocalItems.subList(rawTrackIndex + 1, rawLocalItems.size)
-                .filter { it.queueTier != QueueTier.CONTEXT }
-            pastAndCurrent + upcoming
-        } else {
-            rawLocalItems.filter { it.queueTier != QueueTier.CONTEXT }
-        }
-
         val localIds = localItems.map { it.mediaId }
-        val trackIndex = localIds.indexOf(track.videoId)
+        val trackIndex = (0 until exo.currentMediaItemIndex).count {
+            val id = exo.getMediaItemAt(it).mediaId
+            !id.startsWith("content://") && !id.startsWith("file://")
+        }
         val clampedIds = if (trackIndex >= 0) {
             val upcomingEnd = (trackIndex + 1 + MAX_PARTY_UPCOMING_QUEUE).coerceAtMost(localIds.size)
             localIds.subList(0, upcomingEnd)
@@ -891,18 +892,23 @@ class PartySync(
         if (song.isDeviceFile()) return
         Log.i(TAG, "seeding the new party with what this device is already playing")
         val currentIndex = exo.currentMediaItemIndex
-        if (currentIndex >= 0 && currentIndex + 1 < exo.mediaItemCount) {
-            val toKeep = (currentIndex + 1 until exo.mediaItemCount)
+        if (!seededPlaylist && currentIndex >= 0) {
+            seededPlaylist = true
+            val items = (0 until exo.mediaItemCount)
                 .map { exo.getMediaItemAt(it) }
-                .filter { it.queueTier != QueueTier.CONTEXT }
-            if (toKeep.size != exo.mediaItemCount - (currentIndex + 1)) {
-                exo.replaceMediaItems(currentIndex + 1, exo.mediaItemCount, toKeep)
-            }
+            val shareable = items.filterNot { it.toSong().isDeviceFile() }
+            val index = items.take(currentIndex).count { !it.toSong().isDeviceFile() }
+            ListenTogether.preparePlaylist(shareable.map { it.toSong().toPartyTrack(0L) }, index)
+            val toKeep = items.drop(currentIndex + 1)
+                .filterNot { it.toSong().isDeviceFile() }
+                .take(MAX_PARTY_UPCOMING_QUEUE)
+            exo.replaceMediaItems(currentIndex + 1, exo.mediaItemCount, toKeep)
         }
         publish()
     }
 
     private fun onEnteredParty() {
+        seededPlaylist = false
         val exo = player() ?: return
         Log.i(TAG, "entered party, stashing personal queue")
         PartyPersonalQueueStash.stashFromPlayer(exo)

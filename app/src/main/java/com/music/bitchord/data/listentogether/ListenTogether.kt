@@ -250,6 +250,8 @@ object ListenTogether {
     private val clock = ServerClock(SystemClock::elapsedRealtime)
     private val switchMutex = Mutex()
 
+    private val playlistContinuation = PartyPlaylistContinuation()
+
     private val _state = MutableStateFlow(State())
     val state: StateFlow<State> = _state.asStateFlow()
 
@@ -832,6 +834,7 @@ object ListenTogether {
                 .putString(KEY_TOKEN, membership.token)
                 .apply()
             clock.reset()
+            synchronized(playlistContinuation) { playlistContinuation.clear() }
             _state.value = State(
                 code = membership.code,
                 you = membership.you,
@@ -889,6 +892,7 @@ object ListenTogether {
                 .putString(KEY_TOKEN, membership.token)
                 .apply()
             clock.reset()
+            synchronized(playlistContinuation) { playlistContinuation.clear() }
             _state.value = State(
                 code = membership.code,
                 you = membership.you,
@@ -1025,6 +1029,7 @@ object ListenTogether {
                     .putString(KEY_TOKEN, membership.token)
                     .apply()
                 clock.reset()
+                synchronized(playlistContinuation) { playlistContinuation.clear() }
                 _state.value = State(
                     code = membership.code,
                     you = membership.you,
@@ -1056,6 +1061,7 @@ object ListenTogether {
             token = null
             activePartyServerBase = null
             prefs.edit().remove(KEY_CODE).remove(KEY_TOKEN).apply()
+            synchronized(playlistContinuation) { playlistContinuation.clear() }
             _state.value = State()
             if (code != null && held != null) {
                 releaseStaleSlotOnServer(currentServer, code, held)
@@ -1087,6 +1093,22 @@ object ListenTogether {
             put("isPlaying", isPlaying)
         }
 
+    /** Retains the playlist tail locally while the server holds its bounded upcoming queue. */
+    fun preparePlaylist(queue: List<PartyTrack>, index: Int): PartyQueue =
+        synchronized(playlistContinuation) {
+            playlistContinuation.start(queue, index, _state.value.queue.seq)
+        }
+
+    fun refillPlaylist(): List<PartyTrack> {
+        val state = _state.value
+        if (state.connection != Connection.LIVE || state.controlsLocked) return emptyList()
+        val batch = synchronized(playlistContinuation) {
+            playlistContinuation.nextBatch(state.queue, state.playback)
+        }
+        if (batch.isNotEmpty()) queueAdd(batch)
+        return batch
+    }
+
     fun setQueue(queue: List<PartyTrack>, index: Int) = control("setQueue") {
         put("queue", json.encodeToJsonElement(kotlinx.serialization.builtins.ListSerializer(PartyTrack.serializer()), queue))
         put("queueIndex", index)
@@ -1101,7 +1123,11 @@ object ListenTogether {
         put("videoId", videoId)
     }
 
-    fun queueClear() = control("queueClear") {}
+    fun queueClear() {
+        if (_state.value.controlsLocked) return
+        synchronized(playlistContinuation) { playlistContinuation.clear() }
+        control("queueClear") {}
+    }
 
     fun queueMove(fromIndex: Int, toIndex: Int, videoId: String? = null) = control("queueMove") {
         put("fromIndex", fromIndex)
@@ -1317,6 +1343,7 @@ object ListenTogether {
                 val you = frame["you"]?.let {
                     runCatching { json.decodeFromJsonElement(PartyMember.serializer(), it) }.getOrNull()
                 }
+                synchronized(playlistContinuation) { playlistContinuation.onReconnect(party.queue.seq) }
                 _state.update { it.copy(
                     code = party.code,
                     you = you ?: it.you,

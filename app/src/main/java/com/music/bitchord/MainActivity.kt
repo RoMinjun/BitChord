@@ -203,6 +203,7 @@ import com.music.bitchord.playback.playBoundedContext
 import com.music.bitchord.playback.contextEntryKey
 import com.music.bitchord.playback.toMediaItem
 import com.music.bitchord.playback.toSong
+import com.music.bitchord.playback.toPartyTrack
 import com.music.bitchord.playback.toDirectYouTubeMediaItem
 import com.music.bitchord.playback.toggleAutoplay
 import com.music.bitchord.playback.toggleShuffle
@@ -1359,8 +1360,10 @@ private fun BitChordApp(
                     tappedSong = selectedSong,
                     source = source,
                     upcomingPartyTracks = upcomingPartyTracks,
+                    followingSongs = songs.drop(index + 1),
                 )
-                c.playSongs(timeline, 0)
+                val initial = ListenTogether.preparePlaylist(timeline.map { it.toPartyTrack(0L) }, 0)
+                c.playSongs(timeline.take(initial.items.size), 0)
             } else {
                 // A Cast session still owns the full queue on the phone so the
                 // receiver can follow its existing queue semantics. The bounded

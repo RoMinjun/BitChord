@@ -245,6 +245,13 @@ internal class DesktopPartySync(
         }
         loadingVideoId = null
         reconcileQueue(party)
+        val playlistBatch = DesktopListenTogether.refillPlaylist()
+        if (playlistBatch.isNotEmpty()) {
+            applyPartyUpcoming(partyUpcomingAfter(party.queue, target, track.videoId) + playlistBatch)
+            awaitPlaybackSeq = party.playback.seq
+            awaitQueueSeq = party.queue.seq + 1
+            quietUntilMs = nowMs() + INTENT_QUIET_MS
+        }
 
         if (!target.isPlaying) {
             locallyPaused = false
@@ -457,32 +464,22 @@ internal class DesktopPartySync(
         ): Pair<List<PartyTrack>, Int> {
             val raw = songs.withIndex()
                 .filter { (_, song) -> song.localPath == null && song.localUri == null }
-            val rawCurrent = raw.indexOfFirst { (originalIndex, song) ->
+            val projectedCurrent = raw.indexOfFirst { (originalIndex, song) ->
                 originalIndex == currentIndex && song.videoId == currentVideoId
             }.takeIf { it >= 0 } ?: raw.indexOfFirst { it.value.videoId == currentVideoId }
 
-            val withoutContextTail = if (rawCurrent >= 0) {
-                raw.take(rawCurrent + 1) + raw.drop(rawCurrent + 1)
-                    .filter { it.value.queueTier != QueueTier.CONTEXT }
-            } else {
-                raw.filter { it.value.queueTier != QueueTier.CONTEXT }
-            }
-            val projectedCurrent = withoutContextTail.indexOfFirst { (originalIndex, song) ->
-                originalIndex == currentIndex && song.videoId == currentVideoId
-            }.takeIf { it >= 0 }
-                ?: withoutContextTail.indexOfFirst { it.value.videoId == currentVideoId }
             val endExclusive = if (projectedCurrent >= 0) {
                 (projectedCurrent + 1 + MAX_PARTY_UPCOMING_QUEUE)
-                    .coerceAtMost(withoutContextTail.size)
+                    .coerceAtMost(raw.size)
             } else {
-                (1 + MAX_PARTY_UPCOMING_QUEUE).coerceAtMost(withoutContextTail.size)
+                (1 + MAX_PARTY_UPCOMING_QUEUE).coerceAtMost(raw.size)
             }
-            val tracks = withoutContextTail.take(endExclusive).map { (_, queued) ->
+            val tracks = raw.take(endExclusive).map { (_, queued) ->
                 queued.toPartyTrack(
                     if (queued.videoId == currentVideoId) currentDurationMs else 0L,
                 )
             }
-            return tracks to tracks.indexOfFirst { it.videoId == currentVideoId }
+            return tracks to projectedCurrent
         }
     }
 }

@@ -9,6 +9,7 @@ import com.music.bitchord.playback.QueueCoordinator.asQueueEntry
 import com.music.bitchord.playback.QueueSource
 import com.music.bitchord.ui.screens.matching
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DetailScreenQueueTest {
@@ -145,7 +146,7 @@ class DetailScreenQueueTest {
     }
 
     @Test
-    fun `tapping song in playlist while in party constructs single-song queue without surrounding context tracks and preserves upcoming manual party queue`() {
+    fun `tapping song in playlist while in party keeps following tracks and upcoming manual party queue`() {
         val playlistSongs = List(50) { i ->
             testSong(id = "track-$i", title = "Song $i", artist = "Artist $i")
         }
@@ -164,11 +165,10 @@ class DetailScreenQueueTest {
             tappedSong = selectedSong,
             source = source,
             upcomingPartyTracks = upcomingPartyTracks,
+            followingSongs = playlistSongs.drop(21),
         )
 
-        // Resulting timeline must have ONLY: [selectedSong] + [party-manual-1] + [party-manual-2]
-        // Surrounding playlist tracks (track-0..19, track-21..49) are NOT in the queue
-        assertEquals(3, timeline.size)
+        assertEquals(32, timeline.size)
         assertEquals("track-20", timeline[0].videoId)
         assertEquals(QueueTier.CONTEXT, timeline[0].queueTier)
         assertEquals("My Playlist", timeline[0].playbackSource)
@@ -179,6 +179,8 @@ class DetailScreenQueueTest {
 
         assertEquals("party-manual-2", timeline[2].videoId)
         assertEquals(QueueTier.USER_QUEUE, timeline[2].queueTier)
+        assertEquals(playlistSongs.drop(21).map { it.videoId }, timeline.drop(3).map { it.videoId })
+        assertTrue(timeline.drop(3).all { it.queueTier == QueueTier.USER_QUEUE })
     }
 
     @Test

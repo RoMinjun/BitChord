@@ -855,18 +855,19 @@ fun BitChordDesktopApp() {
     }
 
     /**
-     * The phone's party queue for a track picked here: that track, then what the party's members
-     * queued by hand. Never the album around it, and never the last track's AutoPlay — the party
-     * shares one running order, and the phone builds it exactly this way.
+     * Keep existing manual party entries ahead of the rest of the selected collection.
      */
-    fun partyPlaybackQueue(tapped: Song): List<Song> {
+    fun partyPlaybackQueue(tapped: Song, followingSongs: List<Song> = emptyList()): List<Song> {
         val party = DesktopListenTogether.state.value
         val upcoming = partyUpcomingAfter(party.queue, party.playback, party.playback.track?.videoId)
-        return QueueTimeline.buildPartyPlaybackQueue(
+        val songs = QueueTimeline.buildPartyPlaybackQueue(
             tapped,
             tapped.queueSource(),
             DesktopQueue.adopt(liveQueue.upcoming, upcoming.map { it.toDesktopSong() }),
+            followingSongs.filter { it.localPath == null && it.localUri == null },
         )
+        val initial = DesktopListenTogether.preparePlaylist(songs.map { it.toPartyTrack(0L) }, 0)
+        return songs.take(initial.items.size)
     }
 
     /** A song played on its own — from a search row, a shelf card, history. */
@@ -947,7 +948,7 @@ fun BitChordDesktopApp() {
         // Past the end still means the last row, as the clamp here always did.
         val at = resolved.indexOfFirst { it.index >= startIndex }.takeIf { it >= 0 } ?: resolved.lastIndex
         if (DesktopListenTogether.state.value.inParty) {
-            liveQueue = DesktopQueue(partyPlaybackQueue(playable[at]), index = 0)
+            liveQueue = DesktopQueue(partyPlaybackQueue(playable[at], playable.drop(at + 1)), index = 0)
             preShuffleOrder = emptyList()
             playCurrent()
             return
@@ -1055,8 +1056,7 @@ fun BitChordDesktopApp() {
         if (partyTrackChangeBlocked()) return
         val seed = canonicalSong(song).copy(radioName = song.title)
         scope.launch {
-            // AutoPlay's section behind the seed, as the phone queues a station — which is also
-            // what lets a party share it: a context tail is never published.
+            // AutoPlay's section behind the seed, as the phone queues a station.
             val related = DesktopAutoplay.tracksFor(listOf(seed), seed, INITIAL_RADIO_TRACKS)
                 .getOrNull()
                 .orEmpty()
@@ -1641,6 +1641,16 @@ fun BitChordDesktopApp() {
                     personalQueueStash = liveQueue
                     personalPositionStash = playbackEngine.state.value.positionMs
                     personalPlayingStash = playbackEngine.state.value.isPlaying
+                }
+                val party = DesktopListenTogether.state.value
+                if (party.you?.isHost == true && party.playback.track == null &&
+                    liveQueue.current?.let { it.localPath == null && it.localUri == null } == true
+                ) {
+                    val songs = liveQueue.songs.filter { it.localPath == null && it.localUri == null }
+                    val index = liveQueue.songs.take(liveQueue.index)
+                        .count { it.localPath == null && it.localUri == null }
+                    val initial = DesktopListenTogether.preparePlaylist(songs.map { it.toPartyTrack(0L) }, index)
+                    liveQueue = DesktopQueue(songs.take(initial.items.size), index)
                 }
             },
             onLeftParty = {
