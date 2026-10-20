@@ -4,6 +4,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.listentogether.PartyMember
+import com.music.bitchord.data.listentogether.PartyQueue
 import com.music.bitchord.data.listentogether.PartyPlayback
 import com.music.bitchord.data.listentogether.PartyTrack
 import com.music.bitchord.data.model.Song
@@ -21,30 +22,69 @@ import kotlinx.coroutines.flow.MutableStateFlow
 class PartyAutomaticTransitionTest {
 
     @Test
-    fun `automatic transition waits silently and resumes if party never answers`() = runTest {
+    fun `own automatic transition echo does not replay the intro`() = runTest {
+        checkTransitionEcho(positionMs = 600L, updatedBy = "me", expectedSeeks = emptyList())
+    }
+
+    @Test
+    fun `automatic transition still aligns a control from another member`() = runTest {
+        checkTransitionEcho(positionMs = 600L, updatedBy = "other", expectedSeeks = listOf(0L))
+    }
+
+    @Test
+    fun `automatic transition still corrects a large timing error`() = runTest {
+        checkTransitionEcho(positionMs = 2_000L, updatedBy = "me", expectedSeeks = listOf(0L))
+    }
+
+    @Test
+    fun `user intent after automatic transition still aligns precisely`() = runTest {
+        checkTransitionEcho(
+            positionMs = 600L, updatedBy = "me", expectedSeeks = listOf(0L), userIntent = true,
+        )
+    }
+
+    private suspend fun kotlinx.coroutines.test.TestScope.checkTransitionEcho(
+        positionMs: Long,
+        updatedBy: String,
+        expectedSeeks: List<Long>,
+        userIntent: Boolean = false,
+    ) {
         withPartyState(liveParty()) {
-            val fake = FakePlayer("next")
+            val fake = FakePlayer("next", positionMs = positionMs)
             val sync = PartySync(this) { fake.player }
             try {
                 sync.onAutomaticTransition()
-
-                assertFalse(fake.playWhenReady)
-                assertTrue(ListenTogether.awaitingStart.value)
-
+                if (userIntent) sync.onLocalIntent()
+                // This test starts in an existing party, without the personal-queue stash.
+                PartySync::class.java.getDeclaredField("lastPartyCode").apply {
+                    isAccessible = true
+                    set(sync, "ABC123")
+                }
+                sync.start()
                 advanceTimeBy(200L)
                 runCurrent()
-                assertFalse(fake.playWhenReady)
-                assertTrue(ListenTogether.awaitingStart.value)
-
-                advanceTimeBy(2_000L)
-                runCurrent()
-
                 assertTrue(fake.playWhenReady)
-                assertEquals(1, fake.playCalls)
+                assertEquals(0, fake.pauseCalls)
                 assertFalse(ListenTogether.awaitingStart.value)
+
+                // Model the setTrack echo after the outbound debounce has published it.
+                withPartyState(liveParty().copy(playback = PartyPlayback(
+                    seq = 1L,
+                    track = PartyTrack(videoId = "next"),
+                    isPlaying = true,
+                    updatedBy = updatedBy,
+                ), queue = PartyQueue(seq = 1L, index = 0, items = listOf(PartyTrack(videoId = "next"))))) {
+                    runCurrent()
+                    assertEquals(expectedSeeks, fake.seeks)
+                    assertTrue(fake.playWhenReady)
+                    val reconcile = PartySync::class.java.getDeclaredMethod("reconcile").apply {
+                        isAccessible = true
+                    }
+                    reconcile.invoke(sync)
+                    assertEquals("echo is handled only once", expectedSeeks, fake.seeks)
+                }
             } finally {
                 sync.stop()
-                ListenTogether.setAwaitingStart(false)
             }
         }
     }
@@ -121,6 +161,7 @@ class PartyAutomaticTransitionTest {
         code = "ABC123",
         connection = ListenTogether.Connection.LIVE,
         clockSynced = true,
+        you = PartyMember(memberId = "me", isHost = true),
         playback = PartyPlayback(
             track = PartyTrack(videoId = "old"),
             isPlaying = true,
@@ -129,24 +170,32 @@ class PartyAutomaticTransitionTest {
 
     private class FakePlayer(
         id: String,
+        positionMs: Long = 0L,
         item: MediaItem = Song(videoId = id, title = id, artist = "Artist", thumbnailUrl = null).toMediaItem(),
     ) {
         var playWhenReady = true
         var pauseCalls = 0
         var playCalls = 0
+        val seeks = mutableListOf<Long>()
+        private var currentPosition = positionMs
         private val currentItem = item
 
         val player: Player = Proxy.newProxyInstance(
             Player::class.java.classLoader,
             arrayOf(Player::class.java),
-        ) { _, method, _ ->
+        ) { _, method, args ->
             when (method.name) {
                 "getPlayWhenReady" -> playWhenReady
                 "getCurrentMediaItem" -> currentItem
                 "getCurrentMediaItemIndex" -> 0
                 "getMediaItemCount" -> 1
                 "getMediaItemAt" -> currentItem
-                "getCurrentPosition" -> 0L
+                "getCurrentPosition" -> currentPosition
+                "seekTo" -> {
+                    currentPosition = args!![0] as Long
+                    seeks += currentPosition
+                    null
+                }
                 "getDuration" -> 180_000L
                 "getPlaybackState" -> Player.STATE_READY
                 "getPlaybackSuppressionReason" -> Player.PLAYBACK_SUPPRESSION_REASON_NONE
