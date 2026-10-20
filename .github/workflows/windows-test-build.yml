@@ -1,0 +1,44 @@
+name: Windows Test Build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Test the shared and desktop queues
+        run: >-
+          .\gradlew.bat :shared:jvmTest :desktopApp:test
+          --tests com.music.bitchord.desktop.DesktopQueueTest
+          --tests com.music.bitchord.desktop.DesktopPartySyncTest
+
+      - name: Build the portable app with its Java runtime
+        run: .\gradlew.bat :desktopApp:createDistributable
+
+      - name: Check native libraries and models
+        shell: bash
+        run: |
+          jar=$(ls desktopApp/build/compose/binaries/main/app/BitChord/app/desktopApp*.jar)
+          jar tf "$jar" | grep -q 'native/bitchord_analysis.dll'
+          jar tf "$jar" | grep -q 'native/bitchord_smtc.dll'
+          jar tf "$jar" | grep -q 'models/.*\.onnx'
+
+      - name: Upload the portable Windows app
+        uses: actions/upload-artifact@v4
+        with:
+          name: bitchord-windows-x64-portable
+          path: desktopApp/build/compose/binaries/main/app/BitChord/
+          if-no-files-found: error
