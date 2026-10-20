@@ -50,7 +50,7 @@ class PartyAutomaticTransitionTest {
         userIntent: Boolean = false,
     ) {
         withPartyState(liveParty()) {
-            val fake = FakePlayer("next", positionMs = positionMs)
+            val fake = FakePlayer("next")
             val sync = PartySync(this) { fake.player }
             try {
                 sync.onAutomaticTransition()
@@ -67,7 +67,8 @@ class PartyAutomaticTransitionTest {
                 assertEquals(0, fake.pauseCalls)
                 assertFalse(ListenTogether.awaitingStart.value)
 
-                // Model the setTrack echo after the outbound debounce has published it.
+                // Audio advances while the server confirms the position published above.
+                fake.currentPosition = positionMs
                 withPartyState(liveParty().copy(playback = PartyPlayback(
                     seq = 1L,
                     track = PartyTrack(videoId = "next"),
@@ -170,14 +171,13 @@ class PartyAutomaticTransitionTest {
 
     private class FakePlayer(
         id: String,
-        positionMs: Long = 0L,
         item: MediaItem = Song(videoId = id, title = id, artist = "Artist", thumbnailUrl = null).toMediaItem(),
     ) {
         var playWhenReady = true
         var pauseCalls = 0
         var playCalls = 0
         val seeks = mutableListOf<Long>()
-        private var currentPosition = positionMs
+        var currentPosition = 0L
         private val currentItem = item
 
         val player: Player = Proxy.newProxyInstance(
